@@ -1,0 +1,22 @@
+{
+  "target": 0.8,
+  "minN": 8,
+  "explore": 0.1,
+  "tiers": {
+    "fast": { "model": "haiku", "effort": "low" },
+    "standard": { "model": "sonnet", "effort": "medium" },
+    "deep": { "model": "opus", "effort": "high" }
+  },
+  "kinds": {
+    "continue": null,
+    "question": "fast",
+    "recon": "fast",
+    "small-edit": "standard",
+    "feature": "standard",
+    "debug": "deep",
+    "design": "deep",
+    "review": "deep",
+    "ops": "standard",
+    "chat": null
+  }
+}

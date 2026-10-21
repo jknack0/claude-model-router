@@ -1,0 +1,17 @@
+{
+  "name": "router",
+  "version": "0.1.0",
+  "description": "Cost-aware routing for Claude Code: tier subagents, per-prompt model/effort/context advice, a spend ledger and report.",
+  "author": { "name": "jknack0" },
+  "license": "MIT",
+  "keywords": ["cost", "routing", "models", "effort", "ledger"],
+  "userConfig": {
+    "data_dir": {
+      "type": "directory",
+      "title": "Router data folder",
+      "description": "Where the spend ledger, routing events and policy are saved. Leave the default to keep them in ~/.claude/router.",
+      "required": false,
+      "default": "~/.claude/router"
+    }
+  }
+}

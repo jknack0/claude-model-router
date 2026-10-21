@@ -1,0 +1,12 @@
+{
+  "name": "claude-model-router",
+  "owner": { "name": "jknack0" },
+  "metadata": { "description": "Cost-aware model, effort and context routing for Claude Code, with a spend ledger." },
+  "plugins": [
+    {
+      "name": "router",
+      "source": "./plugin",
+      "description": "Routes each task to the cheapest model/effort that does the job, and reports where the tokens go."
+    }
+  ]
+}
