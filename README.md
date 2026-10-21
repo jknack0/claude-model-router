@@ -70,3 +70,11 @@ Prices are list prices from `plugin/scripts/lib/pricing.mjs` (as of 2026-10-06).
 ```bash
 node --test test/*.test.mjs
 ```
+
+## Work-machine checklist
+1. Get the repo onto the machine. It has no remote yet, so push it to a private repo or copy the folder.
+2. Run `node --version`. It must be 24 or newer.
+3. In Claude Code, check `/status`. If managed settings set `allowManagedHooksOnly`, plugin hooks won't run. `/router:report` and `/router:retro` still work, but routing, the statusline hints and the first-run baseline don't.
+4. Install with the two commands under Install, then start a new session. The first session builds the baseline in the background, which takes about 30 s on a month of history. Then run `/router:init`.
+5. Optional: create `~/.claude/router/budget.json` with `{"monthlyUsd": 500}`, so shadow estimates show as a share of the budget.
+6. Leave the gateway off at work unless policy clearly allows an `ANTHROPIC_BASE_URL` proxy.
