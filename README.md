@@ -72,7 +72,7 @@ node --test test/*.test.mjs
 ```
 
 ## Work-machine checklist
-1. Get the repo onto the machine. It has no remote yet, so push it to a private repo or copy the folder.
+1. Get the code: either `claude plugin marketplace add jknack0/claude-model-router` (private repo, so the machine needs GitHub access), or clone https://github.com/jknack0/claude-model-router and add the local folder.
 2. Run `node --version`. It must be 24 or newer.
 3. In Claude Code, check `/status`. If managed settings set `allowManagedHooksOnly`, plugin hooks won't run. `/router:report` and `/router:retro` still work, but routing, the statusline hints and the first-run baseline don't.
 4. Install with the two commands under Install, then start a new session. The first session builds the baseline in the background, which took under 35 s on a month of history in testing. Then run `/router:init`.
