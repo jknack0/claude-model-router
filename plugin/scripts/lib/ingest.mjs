@@ -6,7 +6,7 @@ import { sub, projectsDir } from './paths.mjs';
 import { costOf, promptTokens } from './pricing.mjs';
 import { readSession, assistantMessages, humanPrompts, subagentFiles } from './transcripts.mjs';
 
-const VERSION = 3; // bump to force re-ingest when the session file shape changes
+const VERSION = 5; // bump to force re-ingest when the session file shape changes
 
 // ---- per-request helpers (also used by report.mjs) ----
 // A request is stored as [model, input, cacheWrite5m, cacheWrite1h, cacheRead, output].
@@ -100,7 +100,11 @@ export function buildSession(transcriptPath, events = loadEvents()) {
   // The hook stamps its event after the prompt, so match on the hash both records store; failing that, the
   // last human prompt at most 30 s before the event. Corrections never open a topic.
   const sha = (t) => crypto.createHash('sha1').update(t).digest('hex');
-  for (const e of events[sessionId] ?? []) {
+  const sessionEvents = events[sessionId] ?? [];
+  const promptEvents = sessionEvents.filter((e) => e.type !== 'spawn');
+  const spawnEvents = sessionEvents.filter((e) => e.type === 'spawn');
+  const claimed = new Set();
+  for (const e of promptEvents) {
     if (e.boundary !== 'topic') continue;
     const cands = prompts.slice(1).filter((x) => !isCorrection(x.text));
     const gap = (x) => Math.abs(Date.parse(x.ts) - Date.parse(e.ts));
@@ -177,9 +181,17 @@ export function buildSession(transcriptPath, events = loadEvents()) {
     const model = mode(sm.map((m) => m.model)) ?? resolved.get(f.agentId);
     const startTs = use?.ts ?? sl.find((l) => l.timestamp)?.timestamp ?? sm[0].ts;
     const t = tasks[taskOf(startTs)];
+    // the spawn hook's record of this subagent: by tool_use id, else same description hash and the nearest ts
+    let sp = f.toolUseId ? spawnEvents.find((e) => e.toolUseId === f.toolUseId) : null;
+    if (!sp && f.description) {
+      const dh = sha(f.description), gap = (e) => Math.abs(Date.parse(e.ts) - Date.parse(startTs));
+      sp = spawnEvents.filter((e) => e.descHash === dh && !claimed.has(e) && gap(e) < 10 * 60_000).sort((x, y) => gap(x) - gap(y))[0];
+    }
+    if (sp) claimed.add(sp);
     t.subs.push({
       type: f.agentType ?? use?.subagentType ?? 'unknown', model, effort: mode(sm.map((m) => m.effort)),
       description: (f.description ?? '').slice(0, 160), startTs, ...summarize(reqs), status: lastStatus(sl),
+      ...(sp ? { routedPhase: sp.phase ?? null, routedTier: sp.tier ?? null, routedSet: sp.set === true, explore: !!sp.explore, briefChars: sp.briefChars ?? null } : {}),
     });
     touch(t, startTs);
     touch(t, sm.at(-1).ts);
@@ -194,7 +206,9 @@ export function buildSession(transcriptPath, events = loadEvents()) {
     t.subs.sort((a, b) => (a.startTs < b.startTs ? -1 : 1));
     t.subs.forEach((s, j) => {
       const tier = rank(s);
-      if (t.subs.slice(0, j).some((e) => rank(e) < tier && (e.type === s.type || (ROUTER_RANK[e.type] != null && ROUTER_RANK[s.type] != null) || kwOverlap(e.description, s.description) >= 0.5))) t.signals.escalations++;
+      const lower = t.subs.slice(0, j).filter((e) => rank(e) < tier && (e.type === s.type || (ROUTER_RANK[e.type] != null && ROUTER_RANK[s.type] != null) || kwOverlap(e.description, s.description) >= 0.5));
+      if (lower.length) t.signals.escalations++;
+      for (const e of lower) e.escalated = true; // the lower half of an escalation pair
     });
     // the first turn alone (up to the 2nd human prompt): what a shadow replay would redo
     const p2 = t.prompts[1]?.ts ?? '\uffff';
@@ -212,7 +226,7 @@ export function buildSession(transcriptPath, events = loadEvents()) {
     out.push({
       idx: out.length, boundary: t.boundary, start: t.start, end: t.end, prompts: t.prompts,
       mainModels, mainEffort: mode(t.mainEfforts), main, subagents: subs,
-      routed: (events[sessionId] ?? []).filter((e) => e.ts >= lo && e.ts < hi),
+      routed: promptEvents.filter((e) => e.ts >= lo && e.ts < hi),
       turn1, evidence, signals: t.signals, total: main.cost.total + subs.reduce((s, x) => s + x.cost.total, 0),
     });
   }

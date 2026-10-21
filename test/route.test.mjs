@@ -23,20 +23,18 @@ test('tailUsage: latest main-thread message, deduped by id, skips sidechain and 
   assert.equal(tailUsage('/nonexistent'), null);
 });
 
-test('route: first debug prompt emits a deep line; same tier stays silent; tier change emits', () => {
+test('route: the line appears only at a task boundary and only when the main-session fit is cheaper; it never tells Claude to pass a model', () => {
   const dir = mk();
-  const base = { session_id: 's1', transcript_path: '/nonexistent' };
-  const r1 = run('route.mjs', { ...base, prompt: 'the build is failing with a type error' }, dir);
-  assert.equal(r1.status, 0);
-  const l1 = ctx(r1);
-  assert.match(l1, /^\[router\] debug task → subagents: model=opus effort=high/);
-  assert.ok(l1.length < 600);
-  assert.equal(ctx(run('route.mjs', { ...base, prompt: 'still crashing on startup' }, dir)), '');
-  assert.equal(ctx(run('route.mjs', { ...base, prompt: 'ok' }, dir)), '');
-  assert.match(ctx(run('route.mjs', { ...base, prompt: 'find where the config is loaded' }, dir)), /model=haiku effort=low/);
-  assert.equal(events(dir).length, 4);
-  const st = JSON.parse(fs.readFileSync(path.join(dir, 'state/s1.json'), 'utf8'));
-  assert.equal(st.recommendedMain, 'sonnet/medium');
+  const base = { session_id: 's1', transcript_path: path.join(fixtures, 'b-transcript.jsonl') }; // main session is on opus
+  const l1 = ctx(run('route.mjs', { ...base, prompt: 'find where the config is loaded' }, dir));
+  assert.equal(l1, '[router] recon task; subagent models are set at spawn. Main session fits sonnet/medium.');
+  assert.doesNotMatch(l1, /pass|model=|effort=low/);
+  assert.doesNotMatch(ctx(run('route.mjs', { ...base, prompt: 'the build is failing with a type error' }, dir)), /Main session/); // not a boundary
+  assert.equal(events(dir).length, 2);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'state/s1.json'), 'utf8')).recommendedMain, 'opus/high');
+  // deep fit is not cheaper than opus; an unknown current model prints nothing
+  assert.doesNotMatch(ctx(run('route.mjs', { ...base, session_id: 's1b', prompt: 'the build is failing with a type error' }, dir)), /Main session/);
+  assert.equal(ctx(run('route.mjs', { session_id: 's1c', transcript_path: '/nonexistent', prompt: 'find where the config is loaded' }, dir)), '');
 });
 
 test('route: /clear resets so the same tier is announced again', () => {
@@ -44,7 +42,9 @@ test('route: /clear resets so the same tier is announced again', () => {
   const base = { session_id: 's2', transcript_path: '/nonexistent' };
   run('route.mjs', { ...base, prompt: 'the build is failing with a type error' }, dir);
   run('session-start.mjs', { ...base, source: 'clear' }, dir);
-  assert.match(ctx(run('route.mjs', { ...base, prompt: 'the tests are failing now' }, dir)), /^\[router\] debug/);
+  const again = run('route.mjs', { ...base, prompt: 'the tests are failing now' }, dir);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'state/s2.json'), 'utf8')).taskKind, 'debug');
+  assert.equal(events(dir).at(-1).boundary, true);
 });
 
 test('route: big context plus a new topic suggests /clear, once', () => {
@@ -74,10 +74,9 @@ test('session-start prints the instructions under 900 chars and seeds policy', (
 
 test('route: main-session advice never says haiku; a correction is never a topic boundary', () => {
   const dir = mk();
-  const base = { session_id: 's5', transcript_path: path.join(fixtures, 'big-ctx.jsonl') };
+  const base = { session_id: 's5', transcript_path: path.join(fixtures, 'b-transcript.jsonl') };
   const l = ctx(run('route.mjs', { ...base, prompt: 'find where the config is loaded' }, dir));
-  assert.match(l, /model=haiku effort=low/);
-  assert.match(l, /main session fits sonnet\/medium/);
+  assert.match(l, /Main session fits sonnet\/medium/);
   assert.doesNotMatch(l, /fits haiku/);
   run('route.mjs', { ...base, prompt: 'no, that is wrong' }, dir);
   assert.notEqual(events(dir).at(-1).boundary, 'topic');

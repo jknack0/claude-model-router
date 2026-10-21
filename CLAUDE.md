@@ -18,3 +18,5 @@ A Claude Code plugin (`router`, in `plugin/`). Background in PLAN.md, work items
 - Shadow replays use `git clone --local`, never `git worktree`. Repo tools like repit's `./wt` follow `--git-common-dir` back to the real repo.
 - The real `claude` has never run `shadow.mjs run` or the gateway. Verify `--restricted --tools …` and the gateway's SessionStart-marker and `metadata.user_id` assumptions on a real session before trusting them.
 - shadow.test.mjs can fail while other agents edit files in parallel. Judge by a quiet full run.
+- The spawn hook fails closed: it re-tiers only `general-purpose`, agents found with no pinned model, and `policy.spawnOverride`. `router:*` agents count as pinned, because picking `router:deep` is how Claude escalates. Tests fake agent dirs with `ROUTER_CLAUDE_DIR`.
+- Item 10 (spawn routing) was reviewed and the fixes are in, but it hasn't run in a real session. Check `[router]` spawn events in `events.jsonl` after the first real subagent run, and whether the tool is reported as `Agent` or `Task`.

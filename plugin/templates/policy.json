@@ -17,6 +17,13 @@
     "design": "deep",
     "review": "deep",
     "ops": "standard",
-    "chat": null
+    "chat": null,
+    "gather": "standard",
+    "pattern-fit": "deep",
+    "plan": "deep",
+    "plan-review": "deep",
+    "implement-step": "standard",
+    "doc-intake": "standard",
+    "write-guide": "standard"
   }
 }

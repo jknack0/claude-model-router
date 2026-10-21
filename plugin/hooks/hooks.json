@@ -1,5 +1,5 @@
 {
-  "description": "Cost routing: per-prompt model/effort advice, router instructions at session start, ingest at session end.",
+  "description": "Cost routing: per-prompt model/effort advice, per-subagent model at spawn, router instructions at session start, ingest at session end.",
   "hooks": {
     "SessionStart": [
       {
@@ -10,6 +10,12 @@
     "UserPromptSubmit": [
       {
         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/route.mjs\"", "timeout": 10 }]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/spawn.mjs\"", "timeout": 5 }]
       }
     ],
     "SessionEnd": [

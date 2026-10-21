@@ -10,13 +10,14 @@ Why model, effort *and* context: on a real 30-day history, 93% of spend was cont
 | **Spend ledger** | Reads Claude Code transcripts (`~/.claude/projects`) into per-task records: cost by token type, context size, subagents, outcome signals. Runs at SessionEnd and on demand. Needs no hooks to report. |
 | **`/router:report`** | Totals by model and main vs subagent, context p50/p90, most expensive tasks, cost per subagent type, model × effort comparison, and re-priced what-ifs. |
 | **Per-prompt routing** | A UserPromptSubmit hook classifies the prompt locally (no API call) and adds one `[router]` line telling Claude which `model`/`effort` to pass to subagents. It suggests `/clear` when a new topic arrives with a large context. Prompts like "ok" or "continue" get nothing. |
+| **Spawn-time routing** | A PreToolUse hook on `Agent` reads each subagent's brief, picks its phase (gather, pattern-fit, plan, plan-review, implement-step, doc-intake, write-guide, or debug/design/review) and sets its `model`. It leaves explicit models, agents that pin a model and agents it can't find alone. When the same brief is re-spawned after a failure, it goes one tier up. Gather briefs are told to write markdown files and return a short index. Briefs over 4K chars get a note to pass a file path instead. |
 | **Tier agents** | `router:fast` (haiku/low, read-only), `router:standard` (sonnet/medium), `router:deep` (opus/high). Each reports `CONFIDENCE`. When a cheap tier struggles, Claude re-runs the task one tier up. |
 | **Statusline** | `opus·high │ ctx 342K ~$0.07/req │ $4.12 │ ⇢ sonnet/medium`: what each extra request costs right now, and whether a cheaper main model would fit. |
 | **Learning** | `/router:retro`: ingest, score each (task kind, tier) by outcome (corrections, escalations, blocked agents), and move a kind one tier cheaper only once the evidence clears the bar (n ≥ 8, Wilson lower bound ≥ 0.8). A 10% exploration probes the cheaper tier while it has little data. It also curates `learnings.md`, which is injected at session start. |
 | **Shadow judge** | Optional and costs money. It replays a sample of past tasks one tier cheaper in throwaway git worktrees, and a Sonnet judge compares the results. It always shows an estimate first and needs `--yes`. |
 | **Gateway** | Experimental and opt-in. A local proxy that enforces the routed model per conversation. See [plugin/gateway/README.md](plugin/gateway/README.md). |
 
-The main session's model can't be switched by any hook (Claude Code's hooks can only block a model switch). So for the main session, the router *advises*; it pins only subagents. It never switches the model in the middle of a conversation, because caches and thinking blocks are tied to the model.
+The main session's model can't be switched by any hook (Claude Code's hooks can only block a model switch). So for the main session, the router *advises*; subagents get their model set at spawn. It never switches the model in the middle of a conversation, because caches and thinking blocks are tied to the model.
 
 ## Install
 ```bash

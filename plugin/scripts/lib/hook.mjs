@@ -18,5 +18,7 @@ export async function runHook(name, fn) {
   } catch (e) {
     logError(name, e);
   }
+  // let a large stdout write finish before exiting, or the JSON arrives truncated
+  try { await new Promise((r) => process.stdout.write('', r)); } catch {}
   process.exit(0);
 }

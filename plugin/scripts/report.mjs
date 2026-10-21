@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { sub } from './lib/paths.mjs';
 import { PRICES_AS_OF } from './lib/pricing.mjs';
 import { ingestAll, reqCost, reqCtx } from './lib/ingest.mjs';
+import { phaseRows, briefStats, phaseLines } from './lib/phases.mjs';
 
 const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(s.length * p))] : 0; };
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -43,12 +44,14 @@ export function buildReport({ days = 30, project = '' } = {}) {
   };
   const taskStats = [];
   const subRuns = {};
+  const allSubs = [];
   for (const t of tasks) {
     let crCost = 0, reqs = t.main.requests, ctxMax = t.main.ctxMax;
     for (const r of t.main.reqs) { addReq(r, 'main'); crCost += reqCost(r).cr; }
     for (const s of t.subagents) {
       for (const r of s.reqs) { addReq(r, 'sub', s.type); crCost += reqCost(r).cr; }
       reqs += s.requests;
+      allSubs.push(s);
       ctxMax = Math.max(ctxMax, s.ctxMax);
       (subRuns[`${s.type}\t${s.model}`] ??= []).push(s);
     }
@@ -91,7 +94,7 @@ export function buildReport({ days = 30, project = '' } = {}) {
       count: tasks.length, p50: pct(totals, 0.5), p90: pct(totals, 0.9), mean: mean(totals),
       top: taskStats.sort((a, b) => b.total - a.total).slice(0, 10),
     },
-    subagents, settings,
+    subagents, settings, phases: phaseRows(allSubs), briefs: briefStats(allSubs),
     whatIfs: [
       wi('opusSubToSonnet', 'Opus 5.5 subagents -> Sonnet 5.5'),
       wi('cheapSubToHaiku', 'scout/explore/researcher/fast subagents -> Haiku 5.5 (100K rule applied)'),
@@ -133,6 +136,7 @@ export function renderText(d) {
   for (const s of d.settings) o.push(`   ${L(s.model, 8)}${L(s.effort, 8)}${R(s.tasks, 7)}${R(s.p50Cost.toFixed(2), 9)}${R(s.p50Requests, 10)}${R(p(s.correctionRate), 11)}${s.lowN ? '  low-n' : ''}`);
   o.push('', '6. WHAT-IFS (same tokens, re-priced; quality not measured)');
   for (const w of d.whatIfs) o.push(`   ${L(w.label, 72)} ${usd(w.before)} -> ${usd(w.after)}  (${w.delta <= 0 ? '-' : '+'}${usd(Math.abs(w.delta))})`);
+  o.push('', '7. BY PHASE (subagent runs by workflow phase x model; phase is the routed one, else the description classified)', ...phaseLines(d.phases, d.briefs));
   return o.join('\n');
 }
 

@@ -16,6 +16,30 @@ const RULES = [
   ['recon', /\b(find|where|list|search|grep|inventory|locate|look at|show me|which files?)\b/i],
   ['question', /^\s*(explain|why|how|what|which|who|when|is|are|does|do|can you explain|tell me|describe|walk me through)\b/i],
 ];
+const rule = (k) => RULES.find(([n]) => n === k)[1];
+const GATHER_VERB = /\b(find everything|gather|collect|pull (together|everything)|research|look up|dig up)\b/i;
+const GATHER_SRC = /\b(jira|confluence|slack|tickets?)\b/i;
+// tokens that look like issue keys but name a standard or algorithm
+const ISSUE_KEY = /\b(?!(?:UTF|SHA|AES|ISO|MD|RSA|TLS|SSL|HTTP|IPV|RFC|CVE|ES|X)-)[A-Z][A-Z0-9]+-\d+\b/;
+const DOC_VERB = /\b(summari[sz]e|read)\b/i;
+const DOC_SRC = /\b(doc|docs|spec|page|url|link|confluence|pdf)\b/i;
+// Classification order: the first matching step wins. Debug/design/review come before the workflow phases so deep work is never lowered.
+const STEPS = [
+  ['pattern-fit', (t) => /\b(which pattern|what pattern|fits (into|with)|closest existing|similar to (our|the) existing|compare (it )?(to|with) existing|same as how we)\b|\bfit\b.{0,40}\bpattern\b|\bpattern\b.{0,40}\b(fit|fits)\b/i.test(t)],
+  ['plan-review', (t) => /\b(review (the|this|my) plan|critique the plan|poke holes)\b/i.test(t)],
+  ['plan', (t) => /\b(implementation plan|estimate|break (it )?down|plan (out|for|the)|outline|level of effort)\b|\bLOE\b/i.test(t)],
+  ['debug', (t) => rule('debug').test(t)],
+  ['design', (t) => rule('design').test(t)],
+  ['review', (t) => rule('review').test(t)],
+  ['gather', (t) => GATHER_VERB.test(t) && (GATHER_SRC.test(t) || ISSUE_KEY.test(t))],
+  ['implement-step', (t) => /\b(step \d+|items? \d+(–\d+|-\d+)?( of)?|per the plan)\b|(^|[\s/])[\w.-]*plan[\w.-]*\.[a-z]{1,5}\b/i.test(t)],
+  ['doc-intake', (t) => DOC_VERB.test(t) && DOC_SRC.test(t)],
+  ['write-guide', (t) => /\bwrite (a|the) (guide|doc|runbook|readme|technical guide)\b/i.test(t)],
+];
+export const PHASE_KINDS = ['gather', 'implement-step', 'doc-intake', 'write-guide', 'plan', 'plan-review', 'pattern-fit'];
+// implement-step goes to fast only for short mechanical briefs whose first verb is scaffold-like
+const SCAFFOLD_FIRST = /^\W*((please|just|quickly?|now)\s+)*(scaffold|boilerplate|rename|move|stub|wire up)\b/i;
+const HEAVY = /\b(refactor|rewrite|concurren\w*|race|backpressure|ordering|migrat\w*|redesign)\b/i;
 const CHANGE_TO = /\bchange .{1,60} to .{1,60}/i;
 const RISK = /\b(prod|production|drop|delete|migrate|security|safe to|secrets?|billing|payments?|auth(entication)?|credentials?)\b/i;
 const EDIT_VERB = /\b(add|implement|build|create|fix|change|rename|update|refactor|write|remove|delete|make)\b/i;
@@ -31,6 +55,8 @@ export function classify(prompt) {
   const reasons = [];
   let kind = 'chat';
   let confidence = 0.4;
+  let bump = 0;
+  let floor = null;
   const words = text.split(/\s+/).filter(Boolean).length;
 
   const stack = /^\s+at .+\(.+:\d+(:\d+)?\)|Traceback \(most recent call last\)|^\s*File ".+", line \d+/m.test(text);
@@ -41,22 +67,31 @@ export function classify(prompt) {
   } else if (stack || bigBlock) {
     kind = 'debug'; confidence = 0.8; reasons.push(stack ? 'pasted stack trace' : 'code block over 30 lines');
   } else {
-    for (const [k, re] of RULES) {
-      const hit = k === 'question' ? re.test(text) && !EDIT_VERB.test(text)
-        : k === 'small-edit' ? re.test(text) || (words <= 12 && CHANGE_TO.test(text))
-          : re.test(text);
-      if (hit) {
-        kind = k; confidence = 0.7; reasons.push(`matched ${k} keywords`);
-        break;
+    const step = STEPS.find(([, fn]) => fn(text))?.[0];
+    if (step) {
+      kind = step; confidence = PHASE_KINDS.includes(step) ? 0.75 : 0.7; reasons.push(`matched ${kind} ${PHASE_KINDS.includes(step) ? 'phase' : 'keywords'}`);
+    } else {
+      for (const [k, re] of RULES) {
+        if (['debug', 'design', 'review'].includes(k)) continue;
+        const hit = k === 'question' ? re.test(text) && !EDIT_VERB.test(text)
+          : k === 'small-edit' ? re.test(text) || (words <= 12 && CHANGE_TO.test(text))
+            : re.test(text);
+        if (hit) {
+          kind = k; confidence = 0.7; reasons.push(`matched ${k} keywords`);
+          break;
+        }
       }
     }
     if (kind === 'chat' && words <= 3) {
       kind = 'continue'; confidence = 0.6; reasons.push('3 words or fewer');
     }
+    if (PHASE_KINDS.includes(kind)) {
+      if (kind === 'implement-step' && text.length < 400 && SCAFFOLD_FIRST.test(text) && !RISK.test(text) && !HEAVY.test(text)) { bump -= 1; reasons.push('short scaffold-type brief, tier -1'); }
+      if (kind === 'doc-intake') floor = 'standard';
+      if (RISK.test(text)) floor = 'standard';
+    }
   }
 
-  let bump = 0;
-  let floor = null;
   if (kind === 'question') {
     if (RISK.test(text)) { floor = 'deep'; reasons.push('risk words, at least deep'); }
     else if (words >= 25) { floor = 'standard'; reasons.push('long question, at least standard'); }
@@ -64,7 +99,7 @@ export function classify(prompt) {
     if (RISK.test(text)) { floor = 'standard'; reasons.push('risk words, at least standard'); }
   }
   if (kind !== 'continue' && kind !== 'chat') {
-    if (text.length > 1500) { bump += 1; reasons.push('long prompt, tier +1'); }
+    if (text.length > 1500 && !PHASE_KINDS.includes(kind)) { bump += 1; reasons.push('long prompt, tier +1'); }
     if (/^\W*(quick(ly)?|just)\b/i.test(text)) { bump -= 1; reasons.push('leading "quick/just", tier -1'); }
     bump = Math.max(-1, Math.min(1, bump));
   }
@@ -75,9 +110,11 @@ export function classify(prompt) {
 export function loadPolicy() {
   const tpl = JSON.parse(fs.readFileSync(TEMPLATE, 'utf8'));
   const file = path.join(dataDir(), 'policy.json');
-  const defaults = { target: tpl.target, minN: tpl.minN, explore: tpl.explore };
+  const defaults = { target: tpl.target, minN: tpl.minN, explore: tpl.explore, spawnOverride: [] };
   try {
-    return { ...defaults, ...JSON.parse(fs.readFileSync(file, 'utf8')) };
+    const user = JSON.parse(fs.readFileSync(file, 'utf8'));
+    // phase kinds added after a user's policy.json was seeded fall back to the template's tier
+    return { ...defaults, ...user, kinds: { ...tpl.kinds, ...user.kinds } };
   } catch (e) {
     if (e.code === 'ENOENT') fs.copyFileSync(TEMPLATE, file);
     return tpl;

@@ -279,3 +279,85 @@ So the router starts from your history, not from nothing.
   - the lock wait works;
   - SessionStart spawns the job once (inject the spawn function, or check for the lock file) and prints the line only when it isn't initialized;
   - retro shows the vs-baseline block.
+
+# Item 10: per-subagent routing at spawn time + workflow phases
+
+Jon's work is two plan → execute pipelines:
+- **(1) features:** plan → review plan → subagents implement the steps.
+- **(2) integrations:** make a directory → an agent reads the Jira ticket and gathers everything from Jira/Confluence/Slack (MCP) into md files → decide which existing pattern the integration fits → implementation plan + high-level estimate.
+
+Most of the spend is subagents, so route each subagent when it's spawned.
+
+Verified (code.claude.com/docs/en/hooks, 2026-10-21):
+- PreToolUse fires for the `Agent` tool (matcher `"Agent"`).
+- `tool_input` has `prompt`, `description`, `subagent_type`, and optionally `model` (an alias).
+- `hookSpecificOutput.updatedInput` **replaces the whole input**, so include the unchanged fields. Pair it with `"permissionDecision": "allow"`. `additionalContext` is also accepted.
+- **`effort` is not documented** for Agent tool_input. Don't set it, because an unknown field could fail the spawn. Model only.
+
+## 10a. Phases (classifier, `lib/classify.mjs`)
+Add phase kinds. They're used for typed prompts (route.mjs) and subagent briefs (spawn.mjs), checked before the generic rules where they match:
+
+| Phase | Matches | Default tier |
+|---|---|---|
+| `gather` | jira, confluence, slack, ticket, an issue key `\b[A-Z][A-Z0-9]+-\d+\b`, "gather/collect/pull everything", "find everything about" | standard |
+| `pattern-fit` | "which pattern", "what pattern", "fits (into\|with)", "closest existing", "similar to (our\|the) existing", "compare (it )?(to\|with) existing", "same as how we" | deep |
+| `plan` | "implementation plan", "estimate", "break (it )?down", "plan (out\|for\|the)", "outline", "level of effort", "LOE" | deep |
+| `plan-review` | "review (the\|this\|my) plan", "critique the plan", "poke holes" | deep |
+| `implement-step` | "implement step \d+", "step \d+ of", "items? \d+(–\d+)? of", "per the plan", a `\.md` plan path plus implement/execute | standard; "scaffold\|boilerplate\|rename\|move files\|wire up\|stub" lowers it to fast |
+| `doc-intake` | "summari[sz]e", "read (this\|the) (doc\|spec\|page)", "what does this doc say" | standard (never fast, because of size) |
+| `write-guide` | "write (a\|the) (guide\|doc\|runbook\|readme\|technical guide)" | standard |
+
+Keep the existing kinds and their tiers as fallbacks. Put the phase defaults in `templates/policy.json` under `kinds` (one table). Risk/debug floors still apply.
+
+## 10b. Spawn hook (`plugin/scripts/spawn.mjs`, hooks.json PreToolUse matcher `Agent`)
+1. Parse stdin and use `tool_input`. Never throw or print on error; budget under 150 ms.
+2. **Leave the model alone** when:
+   - `tool_input.model` is set (an explicit choice), or
+   - the agent's definition pins a non-`inherit` model.
+
+   To find that definition, look up `subagent_type` in order:
+   - `router:*` in this plugin's agents/;
+   - `~/.claude/agents/<name>.md`;
+   - `<cwd>/.claude/agents/<name>.md`;
+   - for `<plugin>:<name>`, the newest `~/.claude/plugins/cache/*/<plugin>/*/agents/<name>.md`;
+   - built-ins `Explore`, `Plan` and `statusline-setup`: leave them alone.
+
+   Read only the frontmatter `model:`. Cache the lookups in `state/agents.json` with file mtimes.
+   - Exception: `policy.json.spawnOverride` (default `[]`) lists agent types the router may re-tier even when their frontmatter pins a model.
+3. Otherwise classify `description + "\n" + prompt` to get a phase → tier (policy `kinds`, plus tierFor floors) → model alias.
+   - **Escalation:** if this session spawned a brief with the same sha1, or ≥50% keyword overlap, in the last 30 min at tier T, use max(tier, T+1), capped at deep.
+   - Record spawns in `state/<session>.json.spawns` (keep the last 20: hash, keywords, tier, ts).
+4. **Exploration:** reuse route.mjs's exploration rule (the policy's `explore` share, only while the cheaper tier has n < minN for that phase) and mark `explore: true`.
+5. Output `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{...tool_input, model},"additionalContext":"..."}}` **only when changing the model or adding a note**. Otherwise print nothing.
+6. **gather phase:** also append one line to `updatedInput.prompt`: `\n\n(Router: write what you find to markdown files in the working directory and reply with an index of at most 20 lines: file paths plus one line each.)`. Do this only when the brief doesn't already mention writing files.
+7. **Fat brief:** if `prompt` is over 4,000 chars, add `additionalContext`: `[router] this subagent brief is <N> chars; subagent context is the main cost — next time pass a file path ("implement step 3 of plan.md") instead of pasting.` Never block.
+8. Append `{ts, type:'spawn', sessionId, toolUseId (payload tool_use_id if present), subagentType, phase, tier, model, set: bool, reason, explore, briefChars, hash}` to `events.jsonl`.
+
+## 10c. Ledger, learning, report
+- **ingest:** attach a spawn event to its subagent by `toolUseId` (meta.json `toolUseId`); fall back to description hash plus the nearest ts. Store `routedPhase`, `routedTier` and `explore` on the subagent. Bump the shape VERSION.
+- **policy:** add **subagent samples**. A subagent yields `(routedPhase, tierOf(model))` only when its spawn event had `set: true` (the router picked the model; stored as `routedSet`). It succeeds when its final STATUS is done (or absent) and it isn't the lower half of an escalation pair. A failure is partial/blocked, or an escalation away from it. These sit in the same `(kind, tier)` table as task samples, so the phase rows learn from subagents.
+- **report:** a new section **"BY PHASE"** with phase × model → runs, $, $/run, ctxP50 and success %. Use routedPhase when present, else classify the subagent's description. Also a **"BRIEFS"** line: subagent runs whose brief was over 4K chars (from spawn events), and their median ctx vs the rest.
+- **retro:** include the BY PHASE table.
+
+## 10d. Instructions
+`router.md` gets a single line (stay under 900 chars total): subagent models are set automatically at spawn; pass `model` explicitly only to override; if a router-tiered subagent reports `CONFIDENCE: low` or `STATUS: blocked`, re-spawn it with the same brief (the router escalates automatically).
+
+## Tests
+- **phases:** table-driven, including Jon's pipeline prompts:
+  - "read PROJ-123 and find everything about it in jira, confluence and slack" → gather
+  - "which existing integration pattern does this fit" → pattern-fit
+  - "create an implementation plan and a high level estimate" → plan
+  - "implement step 3 of docs/plan.md" → implement-step
+  - "scaffold the client boilerplate per step 2 of plan.md" → implement-step/fast
+- **spawn hook:**
+  - explicit model untouched;
+  - pinned frontmatter untouched (fixture agent file);
+  - inherit or unknown gets routed;
+  - updatedInput keeps all fields;
+  - gather gets the index line;
+  - fat brief gets the note;
+  - the same brief re-spawned escalates;
+  - no output when nothing changes.
+- **ingest:** links a spawn event to a subagent.
+- **policy:** subagent samples.
+- **report:** the BY PHASE section.

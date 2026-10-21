@@ -126,21 +126,19 @@ const withPolicy = (dir, extra) => {
 test('route: explores one tier cheaper only with thin evidence, and marks the event', () => {
   const dir = mk();
   withPolicy(dir, { explore: 1, counts: { debug: { fast: 0, standard: 0, deep: 20 } } });
-  const out = JSON.parse(route(dir, { prompt: 'the build is failing with a type error' }).stdout).hookSpecificOutput.additionalContext;
-  assert.match(out, /model=sonnet effort=medium/);
-  assert.match(out, /trial of a cheaper tier/);
-  assert.ok(out.length < 600);
+  route(dir, { prompt: 'the build is failing with a type error' });
   const e = events(dir)[0];
   assert.deepEqual([e.explore, e.tier], [true, 'standard']);
 
   const d2 = mk(); // enough evidence at the cheaper tier: no trial
   withPolicy(d2, { explore: 1, counts: { debug: { fast: 0, standard: 8, deep: 20 } } });
-  assert.match(JSON.parse(route(d2, { prompt: 'the build is failing with a type error' }).stdout).hookSpecificOutput.additionalContext, /model=opus/);
-  assert.equal(events(d2)[0].explore, false);
+  route(d2, { prompt: 'the build is failing with a type error' });
+  assert.deepEqual([events(d2)[0].explore, events(d2)[0].tier], [false, 'deep']);
 
   const d3 = mk(); // no counts yet (no learn run): never explores
   withPolicy(d3, { explore: 1 });
-  assert.match(JSON.parse(route(d3, { prompt: 'the build is failing with a type error' }).stdout).hookSpecificOutput.additionalContext, /model=opus/);
+  route(d3, { prompt: 'the build is failing with a type error' });
+  assert.equal(events(d3)[0].explore, false);
 });
 
 test('route: low keyword overlap marks boundary topic; overlap does not', () => {

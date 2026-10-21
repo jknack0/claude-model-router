@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import { sub } from './paths.mjs';
 import { classify, TIERS } from './classify.mjs';
+import { subOk } from './phases.mjs';
 
 export const tierIdx = (model) => (/haiku/.test(model ?? '') ? 0 : /sonnet/.test(model ?? '') ? 1 : /opus|fable|mythos/.test(model ?? '') ? 2 : -1);
 export const taskId = (sessionId, idx) => `${sessionId.slice(0, 8)}-${idx}`;
@@ -111,6 +112,14 @@ export function buildStats(tasks, shadow, policy) {
     const kind = taskKind(t);
     if (t.headless || !policy.kinds?.[kind] || judged.has(t.id)) continue;
     for (const [tier, succ, cost] of samplesOf(t)) add(kind, tier, succ, cost);
+  }
+  // subagents whose model the router picked at spawn (set: true; pinned, explicit and built-in runs say nothing about the tier): (phase, tier the subagent ran at) in the same table as task samples
+  for (const t of tasks) {
+    if (t.headless) continue;
+    for (const s of t.subagents) {
+      const tier = tierIdx(s.model);
+      if (s.routedPhase && s.routedSet && tier >= 0 && policy.kinds?.[s.routedPhase]) add(s.routedPhase, tier, subOk(s) ? 1 : 0, s.cost.total);
+    }
   }
   for (const r of shadow) {
     const tier = TIERS.indexOf(r.cheapTier);

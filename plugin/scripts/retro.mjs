@@ -6,6 +6,7 @@ import { sub } from './lib/paths.mjs';
 import { learn, formatTable } from './learn.mjs';
 import { loadTasks, loadEventList } from './lib/policy.mjs';
 import { reqCost, reqCtx } from './lib/ingest.mjs';
+import { phaseRows, briefStats, phaseLines } from './lib/phases.mjs';
 
 const a = process.argv.slice(2);
 const days = a.includes('--days') ? Number(a[a.indexOf('--days') + 1]) || 30 : 30;
@@ -49,10 +50,11 @@ for (const [type, x] of Object.entries(byType).sort((p, q) => q[1].cost / q[1].n
   out.push(`- ${type}: ${x.n} runs, ${money(x.cost / x.n)}/run, ctxP50 ~${Math.round(x.ctx.sort((p, q) => p - q)[Math.floor(x.ctx.length / 2)] / 1000)}K`);
 }
 
+out.push('', '## By phase', '```', ...phaseLines(phaseRows(window.flatMap((t) => t.subagents)), briefStats(window.flatMap((t) => t.subagents)), 10), '```');
 out.push('', '## Policy', '```', formatTable(r), '```');
 const ev = loadEventList().filter((e) => e.ts >= since && e.explore);
 const byKind = {};
-for (const e of ev) byKind[e.kind] = (byKind[e.kind] ?? 0) + 1;
+for (const e of ev) { const key = e.kind ?? e.phase; byKind[key] = (byKind[key] ?? 0) + 1; }
 out.push('', '## Exploration', `- explore rate ${r.policy.explore ?? 0}; trials since the last retro: ${ev.length}${ev.length ? ' (' + Object.entries(byKind).map(([k, n]) => `${k} ${n}`).join(', ') + ')' : ''}`);
 out.push('- evidence so far (n per tier): ' + (Object.entries(r.counts).map(([k, c]) => `${k} ${c.fast}/${c.standard}/${c.deep}`).join(', ') || 'none'));
 

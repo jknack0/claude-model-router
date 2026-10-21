@@ -86,3 +86,41 @@ Test command: `node --test test/*.test.mjs` (55 passing now; keep it green). Add
 - Don't commit, and never run `shadow.mjs run` for real.
 - Reply in 30 lines or fewer: what you fixed (by id), what you skipped and why, and the test count.
 - End with STATUS: and FRICTION: lines.
+
+# Fix wave 3: item 10 review (R4)
+
+R4 = `/private/tmp/claude-501/-Users-drfart-Dev-claude-model-router/02580690-fc6b-419a-a8ef-4ce2a3baba21/scratchpad/review4.md`. It has repros for #1, #2, #4, #5, #6 and #9–11. Decisions:
+
+1. **Rule order** (R4#1, #2). Classify in this order:
+   continue → stack trace → pattern-fit → plan-review → plan → **debug → design → review** → gather → implement-step → doc-intake → write-guide → the generic rules.
+   - **gather** needs a gather verb (find everything | gather | collect | pull (together|everything) | research | look up | dig up) **and** a source (jira | confluence | slack | ticket | an issue key). An issue key or "slack" alone isn't gather.
+   - **implement-step** needs "step N" | "items? N( of)?" | "per the plan" | a path whose filename contains `plan`. "Read CLAUDE.md first, then implement a fix" is not implement-step.
+   - **implement-step → fast** only when the brief is under 400 chars, its first sentence's main verb is scaffold | boilerplate | rename | move | stub | wire up, and it has no debug/design/risk words. Otherwise standard.
+   - **doc-intake** needs summarize/read **plus** doc | spec | page | url | link | confluence | pdf, and no review/design words.
+   - Add every R4 repro brief as a test.
+2. **The route.mjs line** (R4#3): never tell Claude to pass a model on Agent calls. The prompt line becomes `[router] <kind> task; subagent models are set at spawn. Main session fits <m>/<e>.`, printed only at task boundaries and only when the main-session fit is cheaper than the current model. The /clear suggestion stays. router.md stays consistent with that.
+3. **Pinned detection fails closed** (R4#4, #8, #14). Re-tier only:
+   - `general-purpose`;
+   - `router:fast|standard|deep`;
+   - agents whose definition is **found** with no `model:` or `model: inherit`;
+   - types listed in `policy.spawnOverride`.
+
+   Anything not found is left alone, which covers built-ins like Explore and claude-code-guide.
+
+   Finding a definition:
+   - Match by frontmatter `name:`, not by filename.
+   - Search order follows Claude Code's priority: project `.claude/agents` > user `~/.claude/agents` > plugins.
+   - Strip a UTF-8 BOM.
+   - Plugins: read `~/.claude/plugins/installed_plugins.json` for each plugin's install path (check its real shape on this Mac and say what it is), and honour a custom `agents` path in that plugin's plugin.json.
+   - Cache keyed on the mtimes of installed_plugins.json and the agent dirs.
+4. **Escalation** (R4#5, #11):
+   - A retry must have the **same subagent_type**.
+   - The keyword-overlap path also needs non-empty, identical anchors. With empty anchors, only an exact hash counts.
+   - Accept R4#11 (a retry that adds a path isn't escalated). router.md already says to re-spawn the same brief.
+5. **Concurrency** (R4#6): spawn records go to an append-only `state/<sid>.spawns.jsonl`, one line per spawn (one `appendFileSync` of under 4KB). Read the last 50 lines. No read-modify-write.
+6. **Learning** (R4#7): subagent samples only from spawn events with `set: true` (the router picked the model). Missing STATUS counts as success unless escalated away. Update the SPEC item 10c line.
+7. **Output** (R4#9): hook.mjs must flush stdout before exiting (write with a callback, or set exitCode and let the process end; no `process.exit` with output pending). Add a 200KB-brief test that parses the full JSON.
+8. **Regex cost** (R4#10): keywords and anchors use only the first 4,000 chars, and the anchors regex has no nested or overlapping quantifiers. Add a test: a 300K-char single-token brief finishes the hook in under 150 ms.
+9. **Gating** (R4#12, #13):
+   - emit `permissionDecision` / `updatedInput` only when `tool_name` is `Agent` or `Task`;
+   - the hooks.json matcher is `Agent|Task`.
