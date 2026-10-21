@@ -361,3 +361,82 @@ Keep the existing kinds and their tiers as fallbacks. Put the phase defaults in 
 - **ingest:** links a spawn event to a subagent.
 - **policy:** subagent samples.
 - **report:** the BY PHASE section.
+
+# Item 11: installs that work on other machines
+
+Verified on this Mac:
+- `claude plugin marketplace add|update|list|remove` and `claude plugin install|update|list|uninstall` exist (2.1.300).
+- The suite passes on Node 22.22.2, 24.16.0 and 24.22.0.
+- `~/.claude/plugins/installed_plugins.json` is `{version: 2, plugins: {"<name>@<marketplace>": [{scope, installPath, version, ...}]}}`.
+- Hooks currently call bare `node`.
+
+## 11a. Node launcher (`plugin/bin/run`, POSIX sh)
+`sh "${CLAUDE_PLUGIN_ROOT}/bin/run" <script.mjs>` finds a Node of major version 22 or higher and runs `node <plugin>/scripts/<script.mjs>` with stdin passed through.
+- **Search order:**
+  1. `$ROUTER_NODE`
+  2. `node` on PATH
+  3. `/opt/homebrew/bin/node`, `/usr/local/bin/node`
+  4. `~/.volta/bin/node`
+  5. the newest `~/.nvm/versions/node/*/bin/node`
+  6. `~/.local/share/fnm/node-versions/*/installation/bin/node` and `~/Library/Application Support/fnm/node-versions/*/installation/bin/node`
+  7. `~/.asdf/installs/nodejs/*/bin/node`
+  8. `~/.local/share/mise/installs/node/*/bin/node`
+
+  Pick the first with a major version of 22 or higher.
+- **No usable Node:** write one line to `<data dir>/errors.log` (data dir = `$CLAUDE_PLUGIN_OPTION_DATA_DIR` or `~/.claude/router`), print nothing, exit 0. Never break a session.
+- Cache the found path in `<data dir>/node-path` and re-validate it cheaply (exists + executable) on each run. Overhead target: under 15 ms.
+- `hooks.json`: every command becomes `sh "${CLAUDE_PLUGIN_ROOT}/bin/run" <script>.mjs`. The skills' Bash commands may keep `node`, since an interactive shell has it on PATH, but mention `ROUTER_NODE` in the README.
+
+## 11b. `install.sh` (repo root, POSIX sh / bash; works via `curl … | bash` and from a clone)
+- **Flags:**
+  - `--local` installs from the clone the script sits in (marketplace = that folder) instead of GitHub;
+  - `--statusline` adds the statusline without asking;
+  - `--no-statusline` skips it;
+  - `--uninstall` removes the plugin, the marketplace, and our statusline entry if it's ours.
+- **Steps:**
+  1. Require `claude` on PATH, or exit 1 with a clear message.
+  2. Find Node 22+ (same logic as 11a; share it via `plugin/bin/find-node` when running from a clone, or inline it). If none is found, warn with install hints but continue: the plugin installs, and the hooks stay no-ops until Node exists.
+  3. **Marketplace (default source is GitHub, never a local folder):** read the source from `~/.claude/plugins/known_marketplaces.json` (`{"<name>": {"source": {"source": "github", "repo": ...} | {"source": "directory", "path": ...}}}`).
+     - If `claude-model-router` is registered with the wanted source (github `jknack0/claude-model-router`, or the clone path with `--local`), run `claude plugin marketplace update claude-model-router`.
+     - If it's registered with a different source (e.g. a `~/Dev` folder while installing from GitHub), run `claude plugin marketplace remove claude-model-router` and then add it again. Say so in the output.
+     - If it isn't registered, run `claude plugin marketplace add jknack0/claude-model-router` (or the clone path with `--local`).
+  4. Plugin: if `claude plugin list` shows `router@claude-model-router`, run `claude plugin update router@claude-model-router`. Otherwise `claude plugin install router@claude-model-router --scope user`.
+  5. **Statusline:** write a shim `~/.claude/router/statusline.mjs` that reads installed_plugins.json each run, finds the `router@claude-model-router` installPath, and `await import()`s `<installPath>/scripts/statusline.mjs`. If that's not found, it prints nothing.
+     - Add `"statusLine": {"type":"command","command":"sh ~/.claude/router/statusline.sh"}`. The `.sh` uses the same Node finder, then runs the shim.
+     - Add it to `~/.claude/settings.json` only with `--statusline`, or after a y/N prompt when stdin is a TTY (under `curl | bash`, read from /dev/tty when it exists, else skip).
+     - Back up the settings file to `settings.json.router-bak` first.
+     - **Never replace an existing different statusLine.** Print how to add it by hand instead.
+     - Edit JSON with Node, never sed.
+  6. Print the next steps: start a new session (the baseline builds in the background), run `/router:init`, and check `/status` for `allowManagedHooksOnly`.
+- `set -eu`, quoted paths (spaces in HOME), and nothing that needs sudo.
+
+## 11c. README
+Rewrite Install:
+- the one-liner `curl -fsSL https://raw.githubusercontent.com/jknack0/claude-model-router/master/install.sh | bash`;
+- the clone + `./install.sh --local` alternative;
+- requirements: Claude Code, Node 22+; macOS and Linux (Windows unsupported for now: the hooks use sh);
+- remove every `/Users/drfart` path;
+- `ROUTER_NODE` to pin a Node.
+
+The work-machine checklist points at install.sh.
+
+## Tests
+- **`test/install.test.mjs`:**
+  - `bin/run` finds Node through a fake PATH and through a fake nvm dir under a temp HOME;
+  - it exits 0 silently and logs when there's no Node 22+ (fake `node` scripts printing `v18.0.0`);
+  - it passes stdin through.
+- **install.sh** with a fake `claude` on PATH (logs its argv):
+  - a fresh install runs add + install;
+  - a re-run runs update + update;
+  - `--statusline` writes the settings entry and a backup;
+  - an existing different statusLine is left alone;
+  - `--uninstall` reverses it.
+- **Statusline shim:** with a fake installed_plugins.json pointing at the repo's plugin dir, the shim prints the statusline line.
+- **Manual check:** a real `HOME=$(mktemp -d) ./install.sh --local --statusline` against the real claude CLI. Record whether claude allows it with a temp HOME; if it needs auth, say so and stop.
+
+As built (2026-10-21):
+- `ROUTER_NODE` is trusted when it's executable (not version-checked).
+- Tests hide the machine's Node with `ROUTER_NO_SYSTEM_NODE=1`.
+- The `claude` CLI clones GitHub marketplaces over SSH and falls back to HTTPS by itself. Tested with `GIT_SSH_COMMAND=false`. install.sh also retries with the https URL if the shorthand add fails.
+- `marketplace remove` also uninstalls the plugin, so the source switch relies on step 4's fresh install.
+- install.sh passes `--config data_dir=$HOME/.claude/router` so the CLI doesn't warn about the optional option.

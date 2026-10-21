@@ -21,27 +21,28 @@ The main session's model can't be switched by any hook (Claude Code's hooks can 
 
 ## Install
 ```bash
-claude plugin marketplace add ~/Dev/claude_model_router
+curl -fsSL https://raw.githubusercontent.com/jknack0/claude-model-router/master/install.sh | bash
 ```
+Or from a clone, installing that folder instead of GitHub:
 ```bash
-claude plugin install router@claude-model-router --scope user
+git clone https://github.com/jknack0/claude-model-router && cd claude-model-router && ./install.sh --local
 ```
+The script registers the `claude-model-router` marketplace (from GitHub by default; a marketplace registered from a folder is switched), installs `router@claude-model-router` at user scope, and re-running it updates both. Flags: `--local`, `--statusline` (add the statusline without asking), `--no-statusline`, `--uninstall`. It never replaces a statusline you already have.
+
 Start a new session. Try `/router:report`.
+
+**Requirements:** Claude Code, Node 22 or newer (no npm dependencies), macOS or Linux. Windows isn't supported yet: the hooks run through `sh`. The hooks look for Node on PATH, then Homebrew, Volta, nvm, fnm, asdf and mise. To pin one, set `ROUTER_NODE=/path/to/node`. With no Node 22+, the hooks do nothing (one line goes to `errors.log` in the data dir) and your session is unaffected. The `node ...` commands under Commands below need Node on your shell's PATH.
 
 **First run:** the first SessionStart builds a spend baseline from your last 30 days in the background (`baseline.json`, `init.json` in the data dir) and seeds the routing policy. Run `/router:init` to review it, write the first `learnings.md` and see the optional shadow estimate. `/router:retro` then reports spend against that baseline.
 
 To try it for one session without installing:
 ```bash
-claude --plugin-dir ~/Dev/claude_model_router/plugin
+claude --plugin-dir ./plugin
 ```
-
-Requirements: Node 24+, and no npm dependencies. On a work machine with `allowManagedHooksOnly`, the hooks won't run, but `/router:report` and `/router:retro` still work.
+On a work machine with `allowManagedHooksOnly`, the hooks won't run, but `/router:report` and `/router:retro` still work.
 
 ### Statusline (optional)
-Plugins can't set the statusline, so add this to `~/.claude/settings.json`:
-```json
-"statusLine": { "type": "command", "command": "node /Users/drfart/Dev/claude_model_router/plugin/scripts/statusline.mjs" }
-```
+Plugins can't set the statusline, so `install.sh --statusline` adds it to `~/.claude/settings.json` (after backing it up to `settings.json.router-bak`). It points at `~/.claude/router/statusline.sh`, which finds the installed plugin each run, so plugin updates need no change. Skip it and add your own by hand if you already have a statusline.
 
 ## Data
 Everything stays local, in `~/.claude/router` (the plugin's `data_dir` option):
@@ -73,9 +74,8 @@ node --test test/*.test.mjs
 ```
 
 ## Work-machine checklist
-1. Get the code: either `claude plugin marketplace add jknack0/claude-model-router`, or clone https://github.com/jknack0/claude-model-router and add the local folder.
-2. Run `node --version`. It must be 24 or newer.
-3. In Claude Code, check `/status`. If managed settings set `allowManagedHooksOnly`, plugin hooks won't run. `/router:report` and `/router:retro` still work, but routing, the statusline hints and the first-run baseline don't.
-4. Install with the two commands under Install, then start a new session. The first session builds the baseline in the background, which took under 35 s on a month of history in testing. Then run `/router:init`.
-5. Optional: create `~/.claude/router/budget.json` with `{"monthlyUsd": 500}`, so shadow estimates show as a share of the budget.
-6. Leave the gateway off at work unless policy clearly allows an `ANTHROPIC_BASE_URL` proxy.
+1. Run `node --version`. It must be 22 or newer (or set `ROUTER_NODE`).
+2. In Claude Code, check `/status`. If managed settings set `allowManagedHooksOnly`, plugin hooks won't run. `/router:report` and `/router:retro` still work, but routing, the statusline hints and the first-run baseline don't.
+3. Run the one-liner under Install (or clone the repo and run `./install.sh --local`), then start a new session. The first session builds the baseline in the background, which took under 35 s on a month of history in testing. Then run `/router:init`.
+4. Optional: create `~/.claude/router/budget.json` with `{"monthlyUsd": 500}`, so shadow estimates show as a share of the budget.
+5. Leave the gateway off at work unless policy clearly allows an `ANTHROPIC_BASE_URL` proxy.

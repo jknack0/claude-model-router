@@ -1,0 +1,51 @@
+#!/bin/sh
+# Print the path of a Node 22+ binary, or exit 1. Search order: $ROUTER_NODE, PATH, Homebrew,
+# Volta, nvm, fnm, asdf, mise. Prints nothing else.
+min=22
+
+ok() {
+  [ -n "$1" ] && [ -x "$1" ] || return 1
+  v=$("$1" --version 2>/dev/null) || return 1
+  v=${v#v}
+  v=${v%%.*}
+  case $v in '' | *[!0-9]*) return 1 ;; esac
+  [ "$v" -ge "$min" ]
+}
+
+try() {
+  if ok "$1"; then
+    printf '%s\n' "$1"
+    exit 0
+  fi
+}
+
+# dir holding one folder per version; $2 is the path from a version folder to the binary
+newest() {
+  [ -d "$1" ] || return 0
+  # shellcheck disable=SC2012
+  list=$(ls -1 "$1" 2>/dev/null | sed 's/^v//' | sort -t. -k1,1nr -k2,2nr -k3,3nr)
+  old=$IFS
+  IFS='
+'
+  for ver in $list; do
+    try "$1/v$ver/$2"
+    try "$1/$ver/$2"
+  done
+  IFS=$old
+}
+
+home=${HOME:-}
+try "${ROUTER_NODE:-}"
+try "$(command -v node 2>/dev/null || true)"
+if [ -z "${ROUTER_NO_SYSTEM_NODE:-}" ]; then # tests set this to hide the machine's own Node
+  try /opt/homebrew/bin/node
+  try /usr/local/bin/node
+fi
+[ -n "$home" ] || exit 1
+try "$home/.volta/bin/node"
+newest "$home/.nvm/versions/node" bin/node
+newest "$home/.local/share/fnm/node-versions" installation/bin/node
+newest "$home/Library/Application Support/fnm/node-versions" installation/bin/node
+newest "$home/.asdf/installs/nodejs" bin/node
+newest "$home/.local/share/mise/installs/node" bin/node
+exit 1

@@ -1,0 +1,27 @@
+#!/bin/sh
+# Hook launcher: sh run <script.mjs>. Runs plugin/scripts/<script> with a Node 22+ and stdin passed
+# through. With no usable Node it logs one line and exits 0 without printing, so a session never breaks.
+script=${1:-}
+[ -n "$script" ] || exit 0
+case $0 in */*) here=${0%/*} ;; *) here=. ;; esac
+root=${CLAUDE_PLUGIN_ROOT:-$here/..}
+data=${CLAUDE_PLUGIN_OPTION_DATA_DIR:-${ROUTER_DATA_DIR:-$HOME/.claude/router}}
+# shellcheck disable=SC2088
+case $data in '~' | '~/'*) data=$HOME${data#'~'} ;; esac
+
+node=
+if [ -n "${ROUTER_NODE:-}" ] && [ -x "$ROUTER_NODE" ]; then
+  node=$ROUTER_NODE
+elif [ -r "$data/node-path" ]; then
+  read -r node < "$data/node-path" || :
+  [ -x "$node" ] || node=
+fi
+if [ -z "$node" ]; then
+  node=$(sh "$here/find-node" 2>/dev/null) || node=
+  if [ -z "$node" ]; then
+    { mkdir -p "$data" && printf '%s router/bin/run: no Node 22+ found (set ROUTER_NODE); %s skipped\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$script" >> "$data/errors.log"; } 2>/dev/null || :
+    exit 0
+  fi
+  { mkdir -p "$data" && printf '%s\n' "$node" > "$data/node-path"; } 2>/dev/null || :
+fi
+exec "$node" "$root/scripts/$script"
