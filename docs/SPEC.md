@@ -3,7 +3,7 @@
 Read first: `PLAN.md` (why), `docs/facts/claude-code.md` (hook/statusline/agent facts), `docs/facts/transcripts.md` (transcript schema).
 
 ## Ground rules (all items)
-- **Runtime:** Node 24 ESM `.mjs`, **no npm dependencies**, built-ins only. Tests use `node:test` + `node:assert/strict` under `test/`, and run with `node --test test/`.
+- **Runtime:** Node 24 ESM `.mjs`, **no npm dependencies**, built-ins only. Tests use `node:test` + `node:assert/strict` under `test/`, and run with `node --test test/*.test.mjs` (`node --test test/` fails on Node 24).
 - **Shared contract (already written, don't change the API):**
   - `plugin/scripts/lib/pricing.mjs`: `costOf`, `priceFor`, `promptTokens`, `perRequestContextCost`, `resolveModel`, `ALIASES`, `PRICES_AS_OF`.
   - `plugin/scripts/lib/paths.mjs`: `dataDir`, `projectsDir`, `sub`.
